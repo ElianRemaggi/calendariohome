@@ -1,0 +1,1 @@
+import{i as o,X as i,_ as n,y as a,f as r,B as c}from"./CT_u5I1U.js";const m={class:"text-sm text-shift-muted"},p=o({__name:"empleados",setup(d){const t=i(),{replace:s}=n();return a(()=>{const e=Number(t.params.id);Number.isInteger(e)&&e>0?s(`/admin/servicios/${e}`):s("/admin/mi-servicio")}),(e,u)=>(c(),r("div",m,"Redirigiendo…"))}});export{p as default};

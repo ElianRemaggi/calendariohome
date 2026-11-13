@@ -1,0 +1,201 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Rol {
+  USER
+  ADMIN_SERVICIO
+  SUPER_ADMIN
+}
+
+enum EstadoEvento {
+  ACTIVO
+  CANCELADO
+}
+
+enum PatronCalendarioPersona {
+  LISO
+  RAYADO
+  GRILLA
+}
+
+model Funcion {
+  id         Int       @id @default(autoincrement())
+  nombre     String
+  servicioId Int?
+  activo     Boolean   @default(true)
+  servicio   Servicio? @relation(fields: [servicioId], references: [id])
+  personas   Persona[]
+
+  @@unique([servicioId, nombre])
+}
+
+model Servicio {
+  id                   Int                    @id @default(autoincrement())
+  nombre               String                 @unique
+  activo               Boolean                @default(true)
+  personas             Persona[]
+  comentariosMes       ComentarioMes[]
+  funciones            Funcion[]
+  feriados             Feriado[]
+  tiposEventoOverrides ServicioTipoEvento[]
+  admins               PersonaAdminServicio[]
+  periodosBloqueo      PeriodoBloqueo[]
+}
+
+model Persona {
+  id              Int                    @id @default(autoincrement())
+  legajo          Int                    @unique
+  nombre          String                  @db.VarChar(30)
+  funcionId       Int
+  servicioId      Int
+  rol                          Rol                     @default(USER)
+  activo                       Boolean                 @default(true)
+  colorCalendarioPersonalizado Boolean                 @default(false)
+  colorCalendarioFondo         String?                 @db.VarChar(7)
+  colorCalendarioTexto         String?                 @db.VarChar(7)
+  colorCalendarioBorde         String?                 @db.VarChar(7)
+  colorCalendarioPatron        PatronCalendarioPersona @default(LISO)
+  colorCalendarioPatronColor   String?                 @db.VarChar(7)
+  creadoEn                     DateTime                @default(now())
+  actualizadoEn   DateTime               @updatedAt
+  funcion         Funcion                @relation(fields: [funcionId], references: [id])
+  servicio        Servicio               @relation(fields: [servicioId], references: [id])
+  eventos         Evento[]
+  comentariosMes  ComentarioMes[]
+  serviciosAdmin  PersonaAdminServicio[]
+  periodosBloqueoCreados      PeriodoBloqueo[] @relation("PeriodoBloqueoCreadoPor")
+  periodosBloqueoDesactivados PeriodoBloqueo[] @relation("PeriodoBloqueoDesactivadoPor")
+
+  @@index([legajo])
+}
+
+model PersonaAdminServicio {
+  personaId  Int
+  servicioId Int
+  persona    Persona  @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  servicio   Servicio @relation(fields: [servicioId], references: [id], onDelete: Cascade)
+
+  @@id([personaId, servicioId])
+}
+
+model TipoEvento {
+  id                    Int                    @id @default(autoincrement())
+  nombre                String
+  codigo                String                 @unique
+  activo                Boolean                @default(true)
+  requiereCupo          Boolean                @default(true)
+  cupoDiario            Int                    @default(3)
+  permiteExcesoCupo     Boolean                @default(false)
+  permiteCargaPorRango  Boolean                @default(false)
+  bloqueaFinDeSemana    Boolean                @default(true)
+  bloqueaFeriado        Boolean                @default(true)
+  requiereAprobacion    Boolean                @default(false)
+  mesMinOffsetUser      Int                    @default(0)
+  mesMaxOffsetUser      Int?
+  minDiasRango          Int?
+  maxDiasRango          Int?
+  eventos               Evento[]
+  servicioOverrides     ServicioTipoEvento[]
+  periodosBloqueo       PeriodoBloqueo[]
+}
+
+model ServicioTipoEvento {
+  id                   Int        @id @default(autoincrement())
+  servicioId           Int
+  tipoEventoId         Int
+  usaOverride          Boolean    @default(false)
+  requiereCupo         Boolean?
+  cupoDiario           Int?
+  permiteExcesoCupo    Boolean?
+  permiteCargaPorRango Boolean?
+  bloqueaFinDeSemana   Boolean?
+  bloqueaFeriado       Boolean?
+  requiereAprobacion   Boolean?
+  mesMinOffsetUser     Int?
+  mesMaxOffsetUser     Int?
+  minDiasRango         Int?
+  maxDiasRango         Int?
+  servicio             Servicio   @relation(fields: [servicioId], references: [id], onDelete: Cascade)
+  tipoEvento           TipoEvento @relation(fields: [tipoEventoId], references: [id], onDelete: Cascade)
+
+  @@unique([servicioId, tipoEventoId])
+}
+
+model Evento {
+  id            Int          @id @default(autoincrement())
+  personaId     Int
+  tipoEventoId  Int
+  fechaDesde    DateTime     @db.Date
+  fechaHasta    DateTime     @db.Date
+  observacion   String?
+  estado        EstadoEvento @default(ACTIVO)
+  excesoCupo    Boolean      @default(false)
+  creadoEn      DateTime     @default(now())
+  actualizadoEn DateTime     @updatedAt
+  canceladoEn   DateTime?
+  persona       Persona      @relation(fields: [personaId], references: [id])
+  tipoEvento    TipoEvento   @relation(fields: [tipoEventoId], references: [id])
+
+  @@index([personaId, fechaDesde, fechaHasta, estado])
+  @@index([tipoEventoId, estado])
+}
+
+model Feriado {
+  id          Int       @id @default(autoincrement())
+  fecha       DateTime  @db.Date
+  descripcion String    @default("")
+  activo      Boolean   @default(true)
+  servicioId  Int?
+  creadoEn    DateTime  @default(now())
+  servicio    Servicio? @relation(fields: [servicioId], references: [id], onDelete: Cascade)
+
+  @@unique([fecha, servicioId])
+}
+
+model ComentarioMes {
+  id            Int       @id @default(autoincrement())
+  month         String    @db.VarChar(7)
+  servicioId    Int
+  personaId     Int
+  texto         String    @default("") @db.VarChar(250)
+  imagenUrl     String?   @db.VarChar(2048)
+  respondidoAId Int?
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
+  eliminadoEn   DateTime?
+
+  persona     Persona        @relation(fields: [personaId], references: [id])
+  servicio    Servicio       @relation(fields: [servicioId], references: [id])
+  respondidoA ComentarioMes? @relation("ComentarioRespuesta", fields: [respondidoAId], references: [id])
+  respuestas  ComentarioMes[] @relation("ComentarioRespuesta")
+
+  @@index([month, servicioId, creadoEn])
+}
+
+/** Cierre de período: empleados no pueden crear/editar/cancelar ese tipo en el rango. Admins sí. */
+model PeriodoBloqueo {
+  id               Int       @id @default(autoincrement())
+  servicioId       Int
+  tipoEventoId     Int
+  fechaDesde       DateTime  @db.Date
+  fechaHasta       DateTime  @db.Date
+  motivo           String?   @db.VarChar(200)
+  activo           Boolean   @default(true)
+  creadoPorId      Int
+  creadoEn         DateTime  @default(now())
+  desactivadoEn    DateTime?
+  desactivadoPorId Int?
+
+  servicio         Servicio   @relation(fields: [servicioId], references: [id], onDelete: Cascade)
+  tipoEvento       TipoEvento @relation(fields: [tipoEventoId], references: [id], onDelete: Cascade)
+  creadoPor        Persona    @relation("PeriodoBloqueoCreadoPor", fields: [creadoPorId], references: [id])
+  desactivadoPor   Persona?   @relation("PeriodoBloqueoDesactivadoPor", fields: [desactivadoPorId], references: [id])
+
+  @@index([servicioId, tipoEventoId, activo, fechaDesde, fechaHasta])
+}

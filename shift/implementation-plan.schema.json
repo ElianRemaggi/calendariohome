@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shift Implementation Plan",
+  "type": "object",
+  "required": ["project", "version", "phases"],
+  "properties": {
+    "project": { "type": "string" },
+    "version": { "type": "string" },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "status", "tests"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^F[0-9]{2}$" },
+          "name": { "type": "string" },
+          "status": {
+            "enum": ["pending", "in_progress", "blocked", "completed"]
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "name", "type", "status"],
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "type": { "enum": ["automated", "manual", "e2e"] },
+                "status": {
+                  "enum": ["pending", "passed", "failed", "skipped"]
+                },
+                "command": { "type": "string" },
+                "expected": { "type": "string" },
+                "steps": {
+                  "oneOf": [
+                    { "type": "string" },
+                    { "type": "array", "items": { "type": "string" } }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

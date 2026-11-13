@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme='dark'] {
+  --shift-header-h: 4.25rem;
+  --shift-bg: #0f1419;
+  --shift-card: #1a2332;
+  --shift-day-bg: #1c2636;
+  --shift-day-adjacent-bg: #151b24;
+  --shift-border: #2a3647;
+  --shift-accent: #3d8bfd;
+  --shift-muted: #8b9cb3;
+  --shift-weekend-bg: #4a4438;
+  --shift-weekend-pattern: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    rgba(120, 113, 100, 0.35) 4px,
+    rgba(120, 113, 100, 0.35) 8px
+  );
+}
+
+[data-theme='light'] {
+  --shift-bg: #eef1f6;
+  --shift-card: #ffffff;
+  --shift-day-bg: #ffffff;
+  --shift-day-adjacent-bg: #e4e8ef;
+  --shift-border: #c5d0de;
+  --shift-accent: #0d6efd;
+  --shift-muted: #5c6b7e;
+  --shift-weekend-bg: #f0e6d6;
+  --shift-weekend-pattern: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 4px,
+    rgba(100, 100, 100, 0.14) 4px,
+    rgba(100, 100, 100, 0.14) 8px
+  );
+}
+
+body {
+  background-color: var(--shift-bg);
+  color: var(--shift-text, #e7ecf3);
+  @apply antialiased;
+}
+
+[data-theme='light'] body {
+  --shift-text: #1a2332;
+  color: var(--shift-text);
+}
+
+/* Botones de acción en paneles admin */
+.btn-admin {
+  @apply inline-flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40;
+}
+.btn-admin-primary {
+  @apply btn-admin text-shift-accent;
+  border-color: color-mix(in srgb, var(--shift-accent) 50%, transparent);
+  background-color: color-mix(in srgb, var(--shift-accent) 15%, transparent);
+}
+.btn-admin-primary:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--shift-accent) 25%, transparent);
+}
+.btn-admin-muted {
+  @apply btn-admin border-shift-border bg-shift-bg text-shift-muted;
+}
+.btn-admin-muted:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--shift-accent) 40%, transparent);
+  color: var(--shift-text, #fff);
+}
+.btn-admin-danger {
+  @apply btn-admin text-red-300;
+  border-color: rgb(153 27 27 / 0.6);
+  background-color: rgb(69 10 10 / 0.4);
+}
+.btn-admin-danger:hover:not(:disabled) {
+  background-color: rgb(69 10 10 / 0.7);
+}
+
+.peer:checked ~ .admin-switch-track {
+  border-color: var(--shift-accent);
+  background-color: color-mix(in srgb, var(--shift-accent) 30%, transparent);
+}

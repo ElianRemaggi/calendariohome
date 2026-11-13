@@ -1,0 +1,859 @@
+{
+  "$schema": "./implementation-plan.schema.json",
+  "project": "Shift",
+  "version": "1.0.0",
+  "documentationBase": "docker/shift/docs",
+  "referenceFiles": {
+    "excelRrhh": {
+      "sourcePathWindows": "c:\\Users\\consulta\\Documents\\Calendarios Home Office\\home office 2026-04 a 2026-05.xlsx",
+      "repoPath": "docker/shift/docs/reference/planilla-rrhh-reference.xlsx",
+      "status": "analyzed_from_screenshot",
+      "format": "list",
+      "columns": ["FECHA", "LEGAJO", "APELLIDO Y NOMBRE", "FUNCION", "SERVICIO", "MOTIVO"],
+      "dateFormat": "D/M/YYYY",
+      "note": "Copiar xlsx al repo opcional; spec cerrada en docs/10 y docs/reference/planilla-columnas.md"
+    }
+  },
+  "conventions": {
+    "phaseStatus": ["pending", "in_progress", "blocked", "completed"],
+    "testStatus": ["pending", "passed", "failed", "skipped"],
+    "timezone": "America/Argentina/Buenos_Aires",
+    "urls": {
+      "production": {
+        "app": "http://agustin-t.hpc.local/shift/",
+        "api": "http://agustin-t.hpc.local/shift-api/"
+      },
+      "localDev": {
+        "app": "http://localhost:8081/shift/",
+        "api": "http://localhost:8081/shift-api/"
+      }
+    },
+    "adminLegajos": [9147],
+    "superAdminLegajos": [9147],
+    "serviceAdminLegajos": [7429, 8884]
+  },
+  "phases": [
+    {
+      "id": "F01",
+      "name": "Infraestructura base y healthchecks",
+      "status": "completed",
+      "dependsOn": [],
+      "objectives": [
+        "Estructura de carpetas shift/frontend y shift/backend",
+        "Servicios shift-db, shift-api, shift-frontend en docker-compose del hub",
+        "Dockerfile multi-stage shift-api con entrypoint migrate deploy",
+        "NestJS mínimo con GET /health",
+        "Nginx shift-frontend y locations gateway /shift/ y /shift-api/ (stub o estático vacío)"
+      ],
+      "deliverables": [
+        "docker/shift/backend/Dockerfile",
+        "docker/shift/backend/docker-entrypoint.sh",
+        "docker/shift/frontend/nginx/default.conf",
+        "Cambios en docker/docker-compose.yml y docker-compose.yml raíz",
+        "Cambios en docker/nginx/nginx.conf (allow 172.17.2.0/24)",
+        "Volumen shift_db → /mnt/compartidas/ia/agustin-t/shift-db"
+      ],
+      "tests": [
+        {
+          "id": "F01-T01",
+          "name": "Contenedores Shift levantan",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker && docker compose up -d shift-db shift-api shift-frontend && docker compose ps shift-db shift-api shift-frontend",
+          "expected": "Los tres servicios en estado running (o healthy cuando aplique)"
+        },
+        {
+          "id": "F01-T02",
+          "name": "Postgres acepta conexiones",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker && docker compose exec shift-db pg_isready -U shift_user -d shift_db",
+          "expected": "exit code 0; mensaje accepting connections"
+        },
+        {
+          "id": "F01-T03",
+          "name": "Health API responde",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sf http://127.0.0.1:8081/shift-api/health (dev) o desde 172.17.2.*: http://agustin-t.hpc.local/shift-api/health",
+          "expected": "HTTP 200; JSON con status ok (db puede ser down hasta F02)"
+        },
+        {
+          "id": "F01-T04",
+          "name": "Gateway sirve ruta /shift/",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sI http://127.0.0.1:8081/shift/ | head -1",
+          "expected": "HTTP/1.1 200 o 304 (no 404)"
+        },
+        {
+          "id": "F01-T05",
+          "name": "IP fuera de rango recibe 403",
+          "type": "manual",
+          "status": "passed",
+          "steps": [
+            "Desde una IP que NO sea 172.17.2.* (o simular con curl sin estar en la red), solicitar /shift/ y /shift-api/health"
+          ],
+          "expected": "HTTP 403 Forbidden en ambas rutas Shift"
+        }
+      ]
+    },
+    {
+      "id": "F02",
+      "name": "Prisma: schema, migraciones y seed",
+      "status": "completed",
+      "dependsOn": ["F01"],
+      "objectives": [
+        "schema.prisma con Persona, Funcion, Servicio, TipoEvento, Evento, Feriado",
+        "Migración inicial",
+        "Seed idempotente según docs/09-seed-datos-iniciales.md",
+        "entrypoint ejecuta prisma migrate deploy al arrancar"
+      ],
+      "deliverables": [
+        "docker/shift/backend/app/prisma/schema.prisma",
+        "docker/shift/backend/app/prisma/migrations/",
+        "docker/shift/backend/app/prisma/seed.ts"
+      ],
+      "tests": [
+        {
+          "id": "F02-T01",
+          "name": "Migraciones aplicadas",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker && docker compose exec shift-api npx prisma migrate status",
+          "expected": "Database schema is up to date; sin migraciones pendientes"
+        },
+        {
+          "id": "F02-T02",
+          "name": "Seed ejecuta sin error",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker && docker compose exec shift-api npx prisma db seed",
+          "expected": "exit code 0; mensaje de seed completado"
+        },
+        {
+          "id": "F02-T03",
+          "name": "Tipos de evento seed presentes",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker && docker compose exec shift-db psql -U shift_user -d shift_db -t -c \"SELECT codigo, \\\"cupoDiario\\\", \\\"permiteExcesoCupo\\\" FROM \\\"TipoEvento\\\";\"",
+          "expected": "Filas HOME_OFFICE (3, true) y VACACIONES (3, false)"
+        },
+        {
+          "id": "F02-T04",
+          "name": "Admins seed por legajo",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker && docker compose exec shift-db psql -U shift_user -d shift_db -t -c \"SELECT legajo, rol FROM \\\"Persona\\\" WHERE legajo IN (9147,7429,8884);\"",
+          "expected": "3 filas con rol ADMIN"
+        },
+        {
+          "id": "F02-T05",
+          "name": "Health reporta DB up",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sf http://127.0.0.1/shift-api/health -H 'Host: agustin-t.hpc.local' | jq -r .db",
+          "expected": "up"
+        }
+      ]
+    },
+    {
+      "id": "F03",
+      "name": "Backend: catálogos y personas",
+      "status": "completed",
+      "dependsOn": ["F02"],
+      "objectives": [
+        "Módulos Nest: funciones, servicios, tipos-evento, feriados, personas",
+        "Guards/middleware legajo (X-Shift-Legajo) y rol ADMIN",
+        "Tests unitarios/e2e de CRUD catálogos y personas"
+      ],
+      "deliverables": [
+        "Endpoints según docs/06-api-rest.md (personas, funciones, servicios, tipos-evento, feriados GET/POST/PATCH admin)"
+      ],
+      "tests": [
+        {
+          "id": "F03-T01",
+          "name": "GET funciones y servicios",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sf http://127.0.0.1/shift-api/funciones -H 'Host: agustin-t.hpc.local' -H 'X-Shift-Legajo: 9147' | jq 'length >= 1'",
+          "expected": "exit 0; al menos una función"
+        },
+        {
+          "id": "F03-T02",
+          "name": "GET persona admin por legajo",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sf http://127.0.0.1/shift-api/personas/by-legajo/9147 -H 'Host: agustin-t.hpc.local' | jq -r .rol",
+          "expected": "ADMIN"
+        },
+        {
+          "id": "F03-T03",
+          "name": "POST persona nueva",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sf -X POST http://127.0.0.1/shift-api/personas -H 'Host: agustin-t.hpc.local' -H 'Content-Type: application/json' -d '{\"legajo\":10001,\"nombre\":\"Test User\",\"funcionId\":1,\"servicioId\":1}' | jq -r .legajo",
+          "expected": "10001"
+        },
+        {
+          "id": "F03-T04",
+          "name": "Legajo duplicado rechazado",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1/shift-api/personas -H 'Host: agustin-t.hpc.local' -H 'Content-Type: application/json' -d '{\"legajo\":10001,\"nombre\":\"Dup\",\"funcionId\":1,\"servicioId\":1}'",
+          "expected": "409"
+        },
+        {
+          "id": "F03-T05",
+          "name": "PATCH no permite cambiar legajo",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -s -o /dev/null -w '%{http_code}' -X PATCH http://127.0.0.1/shift-api/personas/ID -H 'Host: agustin-t.hpc.local' -H 'X-Shift-Legajo: 10001' -H 'Content-Type: application/json' -d '{\"legajo\":99999}'",
+          "expected": "403 Forbidden; legajo sin cambios en DB",
+          "note": "Reemplazar ID por id real de persona 10001 tras F03-T03"
+        },
+        {
+          "id": "F03-T06",
+          "name": "Suite e2e backend catálogos",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test:e2e -- --testPathPattern=catalogos",
+          "expected": "Todos los tests e2e de catálogos en verde"
+        }
+      ]
+    },
+    {
+      "id": "F04",
+      "name": "Backend: eventos y reglas de negocio",
+      "status": "completed",
+      "dependsOn": ["F03"],
+      "objectives": [
+        "Módulo eventos: GET por mes, POST, PATCH, cancelar, validar",
+        "Implementar R1–R5 en EventosService",
+        "Tests unitarios por regla + e2e flujos cupo y rango"
+      ],
+      "deliverables": [
+        "EventosModule con reglas en services (sin lógica en controllers)"
+      ],
+      "tests": [
+        {
+          "id": "F04-T01",
+          "name": "R2: bloqueo fin de semana",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='fin de semana'",
+          "expected": "Tests R2 pasan"
+        },
+        {
+          "id": "F04-T02",
+          "name": "R3: bloqueo feriado",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='feriado'",
+          "expected": "Tests R3 pasan"
+        },
+        {
+          "id": "F04-T03",
+          "name": "R1: una persona un evento por día",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='un evento por dia'",
+          "expected": "Segundo evento mismo día rechazado"
+        },
+        {
+          "id": "F04-T04",
+          "name": "R4: cupo HO con exceso",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='exceso cupo'",
+          "expected": "4to HO mismo día: validar advertencia; crear con confirmarExcesoCupo=true y excesoCupo=true"
+        },
+        {
+          "id": "F04-T05",
+          "name": "Vacaciones rango bloquea días intermedios R1",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='vacaciones rango'",
+          "expected": "No puede crear otro evento en día dentro del rango"
+        },
+        {
+          "id": "F04-T06",
+          "name": "Vacaciones cupo estricto sin exceso",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='vacaciones cupo'",
+          "expected": "4ta persona mismo día VACACIONES: POST rechazado sin exceso"
+        },
+        {
+          "id": "F04-T07",
+          "name": "e2e POST /eventos/validar y /eventos",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test:e2e -- --testPathPattern=eventos",
+          "expected": "Suite e2e eventos en verde"
+        },
+        {
+          "id": "F04-T08",
+          "name": "Cancelar evento no cuenta en cupo",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='cancelado cupo'",
+          "expected": "Tras cancelar, cupo del día disminuye"
+        }
+      ]
+    },
+    {
+      "id": "F05",
+      "name": "Frontend: ingreso, registro y calendario",
+      "status": "completed",
+      "dependsOn": ["F04"],
+      "objectives": [
+        "Nuxt 3 + Pinia + Tailwind",
+        "Pantallas /, /registro, /calendario",
+        "Integración API con baseURL /shift-api",
+        "Modal exceso de cupo",
+        "Build static y montaje en shift-frontend"
+      ],
+      "deliverables": [
+        "docker/shift/frontend/app con dist generado",
+        "Store usePersonaStore con localStorage"
+      ],
+      "tests": [
+        {
+          "id": "F05-T01",
+          "name": "Build frontend sin errores",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/frontend/app && npm ci && NODE_ENV=production NUXT_PUBLIC_API_BASE=/shift-api npm run generate",
+          "expected": "exit 0; directorio dist/ con index.html"
+        },
+        {
+          "id": "F05-T02",
+          "name": "Assets bajo /shift/_nuxt/",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sf http://127.0.0.1/shift/ -H 'Host: agustin-t.hpc.local' | grep -q '_nuxt' && curl -sI http://127.0.0.1/shift/_nuxt/ -H 'Host: agustin-t.hpc.local' | head -1",
+          "expected": "HTML referencia _nuxt; assets responden 200"
+        },
+        {
+          "id": "F05-T03",
+          "name": "Flujo legajo existente → calendario",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Abrir /shift/",
+            "Ingresar legajo 9147",
+            "Verificar redirección a /shift/calendario"
+          ],
+          "expected": "Calendario del mes visible"
+        },
+        {
+          "id": "F05-T04",
+          "name": "Flujo legajo nuevo → registro",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Ingresar legajo no existente (ej. 20002)",
+            "Completar registro",
+            "Llegar a calendario"
+          ],
+          "expected": "Persona creada y calendario usable"
+        },
+        {
+          "id": "F05-T05",
+          "name": "Crear HO día hábil",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Nuevo evento Home Office en un martes del mes",
+            "Confirmar"
+          ],
+          "expected": "Evento visible en calendario"
+        },
+        {
+          "id": "F05-T06",
+          "name": "Modal exceso cupo HO",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Con 3 HO ya cargados el mismo día, usuario 4 intenta anotarse",
+            "Ver modal",
+            "Confirmar de todos modos"
+          ],
+          "expected": "Evento creado marcado exceso en UI/API"
+        }
+      ]
+    },
+    {
+      "id": "F06",
+      "name": "Frontend: panel administrador",
+      "status": "completed",
+      "dependsOn": ["F05"],
+      "objectives": [
+        "Rutas /shift/admin y /shift/admin/exportaciones",
+        "ABM funciones, servicios, tipos evento; feriados desde calendario (modal)",
+        "Edición cupoDiario y flags en tipos",
+        "Vista eventos mes (admin)"
+      ],
+      "deliverables": [
+        "Pantallas admin solo visibles para rol ADMIN"
+      ],
+      "tests": [
+        {
+          "id": "F06-T01",
+          "name": "Usuario no admin no ve admin",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Ingresar con legajo USER (no admin)",
+            "Verificar ausencia de enlace /admin"
+          ],
+          "expected": "Sin acceso a rutas admin"
+        },
+        {
+          "id": "F06-T02",
+          "name": "Admin crea feriado desde calendario",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Legajo 9147 → /shift/calendario",
+            "Clic en día futuro → pestaña Feriado → crear",
+            "Como USER intentar HO ese día"
+          ],
+          "expected": "Feriado visible en grilla; HO bloqueado si tipo bloqueaFeriado"
+        },
+        {
+          "id": "F06-T03",
+          "name": "Admin edita cupo tipo evento",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Cambiar cupoDiario de HOME_OFFICE a 2",
+            "Validar que validar cupo usa nuevo valor"
+          ],
+          "expected": "Exceso a partir del 3er usuario"
+        },
+        {
+          "id": "F06-T04",
+          "name": "Tests e2e Playwright admin (opcional)",
+          "type": "automated",
+          "status": "pending",
+          "command": "cd /bin_server/docker/shift/frontend/app && npm run test:e2e -- --grep admin",
+          "expected": "Tests admin en verde si Playwright configurado"
+        }
+      ]
+    },
+    {
+      "id": "F07",
+      "name": "Exportación Excel RRHH",
+      "status": "completed",
+      "dependsOn": ["F06"],
+      "objectives": [
+        "Analizar planilla referencia en docs/reference/",
+        "GET /exports/rrhh?month=YYYY-MM con ExcelJS",
+        "Layout en rrhh-export.layout.ts alineado a planilla",
+        "UI descarga en /shift/admin/exportaciones"
+      ],
+      "deliverables": [
+        "ExportacionesModule",
+        "docs/10 actualizado con columnas reales de la planilla",
+        "docs/reference/planilla-rrhh-reference.xlsx en repo"
+      ],
+      "tests": [
+        {
+          "id": "F07-T01",
+          "name": "Spec columnas documentada",
+          "type": "automated",
+          "status": "passed",
+          "command": "test -f /bin_server/docker/shift/docs/reference/planilla-columnas.md",
+          "expected": "exit 0; spec desde captura planilla abr-may 2026"
+        },
+        {
+          "id": "F07-T02",
+          "name": "Endpoint export devuelve xlsx",
+          "type": "automated",
+          "status": "passed",
+          "command": "curl -sf -o /tmp/shift-export.xlsx 'http://127.0.0.1/shift-api/exports/rrhh?month=2026-05' -H 'Host: agustin-t.hpc.local' -H 'X-Shift-Legajo: 9147' && file /tmp/shift-export.xlsx",
+          "expected": "Microsoft Excel 2007+ o Zip archive (xlsx)"
+        },
+        {
+          "id": "F07-T03",
+          "name": "Export sin eventos cancelados",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='export excluye cancelados'",
+          "expected": "Test unitario en verde"
+        },
+        {
+          "id": "F07-T04",
+          "name": "Columnas A-F coinciden planilla referencia",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- --testNamePattern='export layout'",
+          "expected": "Headers: FECHA, LEGAJO, APELLIDO Y NOMBRE, FUNCION, SERVICIO, MOTIVO; fecha D/M/YYYY; MOTIVO=TipoEvento.nombre"
+        },
+        {
+          "id": "F07-T05",
+          "name": "Descarga desde UI admin",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Admin → exportaciones → mes 2026-05 → descargar",
+            "Abrir en Excel"
+          ],
+          "expected": "Archivo abre correctamente; datos del mes coherentes"
+        }
+      ]
+    },
+    {
+      "id": "F08",
+      "name": "Integración hub y aceptación final",
+      "status": "completed",
+      "dependsOn": ["F07"],
+      "objectives": [
+        "Tarjeta Shift en docker/hub/index.html",
+        "README operativo actualizado",
+        "Recreate nginx + shift-frontend en prod",
+        "Ejecutar checklist aceptación docs/01"
+      ],
+      "deliverables": [
+        "docker/hub/index.html con enlace /shift/",
+        "docker/shift/README.md comandos finales"
+      ],
+      "tests": [
+        {
+          "id": "F08-T01",
+          "name": "Hub lista proyecto Shift",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Abrir http://agustin-t.hpc.local/",
+            "Ver tarjeta Shift con enlace /shift/"
+          ],
+          "expected": "Enlace funcional"
+        },
+        {
+          "id": "F08-T02",
+          "name": "Rutas existentes del hub intactas",
+          "type": "automated",
+          "status": "passed",
+          "command": "for p in / /n8n/ /senalconvenida/; do curl -sI \"http://127.0.0.1${p}\" -H 'Host: agustin-t.hpc.local' | head -1; done",
+          "expected": "Respuestas 200/301/302 en /, /n8n/, /senalconvenida/ (no 502)"
+        },
+        {
+          "id": "F08-T03",
+          "name": "Checklist aceptación MVP completo",
+          "type": "manual",
+          "status": "pending",
+          "steps": "Ejecutar todos los ítems en acceptanceCriteria de este JSON",
+          "expected": "11/11 ítems OK desde red 172.17.2.*"
+        }
+      ]
+    },
+    {
+      "id": "F09",
+      "name": "UI calendario equipo y tema",
+      "status": "completed",
+      "dependsOn": ["F08"],
+      "objectives": [
+        "Semana domingo–sábado en grilla",
+        "Feriados y no hábiles con contraste marcado",
+        "Modo día y noche (toggle + persistencia)",
+        "Layout web ancho: calendario ocupa más viewport",
+        "Vista calendario filtrada por tipo de evento (equipo)",
+        "Celdas muestran nombre de persona, no tipo de evento",
+        "Color estable por persona con buen contraste",
+        "Banner: legajo y nombre de sesión visibles"
+      ],
+      "deliverables": [
+        "docs/11-ui-calendario-equipo.md",
+        "GET /eventos?month=&tipoEventoId= devuelve equipo (lectura) para calendario",
+        "ShiftCalendarMonth + calendario.vue rediseñados",
+        "composables/useTheme.ts + variables CSS light/dark",
+        "utils/persona-colors.ts"
+      ],
+      "tests": [
+        {
+          "id": "F09-T01",
+          "name": "Grilla empieza en domingo",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/frontend/app && npm run test:fechas",
+          "expected": "Primer día del mes cae en columna correcta (domingo=0)"
+        },
+        {
+          "id": "F09-T02",
+          "name": "Toggle tema persiste",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Calendario → activar modo día",
+            "Recargar página",
+            "Verificar tema día conservado"
+          ],
+          "expected": "localStorage shift-theme"
+        },
+        {
+          "id": "F09-T03",
+          "name": "Calendario HO muestra nombres del equipo",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Usuario A y B con HO el mismo martes",
+            "Usuario C abre calendario filtro Home Office",
+            "Ver ambos nombres en esa celda"
+          ],
+          "expected": "Chips con apellido/nombre; colores distintos"
+        },
+        {
+          "id": "F09-T04",
+          "name": "Banner legajo y nombre",
+          "type": "manual",
+          "status": "pending",
+          "steps": [
+            "Ingresar con legajo conocido",
+            "Leer header"
+          ],
+          "expected": "Texto tipo: Legajo 9147 — NOMBRE APELLIDO"
+        }
+      ]
+    },
+    {
+      "id": "F10",
+      "name": "Chat comentarios del mes (calendario)",
+      "status": "completed",
+      "dependsOn": ["F09"],
+      "objectives": [
+        "Comentarios por month + servicioId (hilo del mes visible)",
+        "API CRUD con permisos autor/admin",
+        "Panel lateral en calendario sin solapar grilla",
+        "Texto máx. 250 caracteres"
+      ],
+      "deliverables": [
+        "docs/13-chat-mes.md",
+        "modelo ComentarioMes + migración",
+        "ComentariosMesModule (GET/POST/PATCH/DELETE)",
+        "ShiftChatPanel.vue + layout calendario"
+      ],
+      "tests": [
+        {
+          "id": "F10-T01",
+          "name": "API comentarios mes integración",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- comentarios-mes",
+          "expected": "Tests POST/GET/PATCH/DELETE y permisos OK"
+        }
+      ]
+    },
+    {
+      "id": "F11",
+      "name": "Ventana temporal por tipo + AdminSiNoSwitch",
+      "status": "completed",
+      "dependsOn": ["F04", "F05"],
+      "objectives": [
+        "mesMinOffsetUser / mesMaxOffsetUser en TipoEvento (R6 generalizada)",
+        "Reemplazar hardcode HOME_OFFICE en eventos-reglas",
+        "AdminSiNoSwitch (No/Sí) en TiposEventoAdmin",
+        "EventoFormModal con ventana derivada del tipo",
+        "Documentación y tests de reglas"
+      ],
+      "deliverables": [
+        "prisma/migrations/20260520140000_ventana_temporal_tipo_evento",
+        "backend/app/src/eventos/eventos-reglas.service.ts",
+        "frontend/app/components/admin/AdminSiNoSwitch.vue",
+        "frontend/app/components/admin/TiposEventoAdmin.vue",
+        "docs/04, 03, 00, 06, 07, 09, 12"
+      ],
+      "tests": [
+        {
+          "id": "F11-T01",
+          "name": "Reglas ventana temporal",
+          "type": "automated",
+          "status": "passed",
+          "command": "cd /bin_server/docker/shift/backend/app && npm run test -- eventos-reglas.integration-spec",
+          "expected": "Tests ventana temporal pasan"
+        }
+      ]
+    },
+    {
+      "id": "F12",
+      "name": "Colores únicos por persona (calendario y chat)",
+      "status": "completed",
+      "dependsOn": ["F05", "F10"],
+      "objectives": [
+        "15 colores + patrones de fondo para distinguir hasta 15 empleados sin repetición por módulo de id",
+        "Asignación por slot según personas visibles en el mes/servicio",
+        "Nombres visibles en burbujas de chat (nombre:)"
+      ],
+      "deliverables": [
+        "frontend/app/utils/persona-colors.ts",
+        "frontend/app/components/ShiftCalendarMonth.vue",
+        "frontend/app/components/ShiftChatPanel.vue",
+        "frontend/app/pages/calendario.vue",
+        "docs/14-mejoras-ux-calendario-chat.md"
+      ],
+      "tests": [
+        {
+          "id": "F12-T01",
+          "name": "Calendario: dos personas distintas no comparten color en la misma vista",
+          "type": "manual",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "F13",
+      "name": "Drag and drop Home Office dentro del mes",
+      "status": "completed",
+      "dependsOn": ["F05", "F11"],
+      "objectives": [
+        "Arrastrar chip propio HO a otro día hábil del mismo mes",
+        "Validar reglas R1-R6 y cupo al soltar",
+        "No aplicar a eventos por rango (Vacaciones)"
+      ],
+      "deliverables": [
+        "ShiftCalendarMonth.vue (DnD)",
+        "calendario.vue",
+        "Opcional: POST /eventos/:id/mover o PATCH fechas",
+        "docs/14-mejoras-ux-calendario-chat.md § F13"
+      ],
+      "tests": [
+        {
+          "id": "F13-T01",
+          "name": "Mover HO de lunes a martes mismo mes",
+          "type": "manual",
+          "status": "pending"
+        },
+        {
+          "id": "F13-T02",
+          "name": "Rechazar drop en fin de semana o mes distinto",
+          "type": "manual",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "F14",
+      "name": "Responder comentario en chat del mes",
+      "status": "completed",
+      "dependsOn": ["F10"],
+      "objectives": [
+        "Campo respondidoAId en ComentarioMes",
+        "UI cita tipo WhatsApp arriba del mensaje nuevo",
+        "Botón flecha curva junto a acciones del comentario"
+      ],
+      "deliverables": [
+        "prisma migración respondidoAId",
+        "comentarios-mes module (DTO, service)",
+        "ShiftChatPanel.vue",
+        "docs/13-chat-mes.md",
+        "docs/06-api-rest.md"
+      ],
+      "tests": [
+        {
+          "id": "F14-T01",
+          "name": "POST comentario con respondidoAId muestra cita",
+          "type": "manual",
+          "status": "pending"
+        }
+      ]
+    },
+    {
+      "id": "F15",
+      "name": "RBAC y admin por servicio",
+      "status": "completed",
+      "dependsOn": ["F06", "F04"],
+      "objectives": [
+        "Roles SUPER_ADMIN, ADMIN_SERVICIO, USER",
+        "Funciones globales y por servicio",
+        "ServicioTipoEvento overrides y cupo por servicio",
+        "Feriados base y por servicio",
+        "Panel admin reorganizado por servicio"
+      ],
+      "deliverables": [
+        "prisma/migrations/20260526120000_rbac_servicios",
+        "common/authorization",
+        "docs/15-rbac-servicios.md",
+        "pages/admin/servicios/[id]/*",
+        "pages/admin/mi-servicio.vue"
+      ],
+      "tests": [
+        {
+          "id": "F15-T01",
+          "name": "9147 super admin ve todos los servicios",
+          "type": "manual",
+          "status": "pending"
+        },
+        {
+          "id": "F15-T02",
+          "name": "7429/8884 solo su servicio",
+          "type": "manual",
+          "status": "pending"
+        }
+      ]
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC01",
+      "description": "Entrar a http://agustin-t.hpc.local/shift/ desde 172.17.2.*",
+      "phase": "F08"
+    },
+    {
+      "id": "AC02",
+      "description": "Legajo 9147 super admin; 7429/8884 admin de servicio acceden panel acotado",
+      "phase": "F15"
+    },
+    {
+      "id": "AC03",
+      "description": "Admin gestiona funciones, servicios, tipos evento; feriados desde calendario",
+      "phase": "F06"
+    },
+    {
+      "id": "AC04",
+      "description": "Usuario nuevo se registra y usa calendario",
+      "phase": "F05"
+    },
+    {
+      "id": "AC05",
+      "description": "Home Office en día hábil se crea correctamente",
+      "phase": "F05"
+    },
+    {
+          "id": "AC06",
+      "description": "Home Office bloquea sábado, domingo y feriado; Vacaciones no (según flags del tipo)",
+      "phase": "F04"
+    },
+    {
+      "id": "AC07",
+      "description": "4ta persona HO mismo día: advertencia y excesoCupo si confirma",
+      "phase": "F04"
+    },
+    {
+      "id": "AC08",
+      "description": "Vacaciones por rango impide otro evento en días del rango",
+      "phase": "F04"
+    },
+    {
+      "id": "AC09",
+      "description": "Segundo evento misma persona otro tipo mismo día bloqueado",
+      "phase": "F04"
+    },
+    {
+      "id": "AC10",
+      "description": "Descarga Excel mensual desde admin",
+      "phase": "F07"
+    },
+    {
+      "id": "AC11",
+      "description": "Enlace Shift visible en hub /",
+      "phase": "F08"
+    }
+  ],
+  "progress": {
+    "completedPhases": ["F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F13", "F14", "F15"],
+    "lastUpdated": "2026-05-26",
+    "notes": "F15: RBAC multi-admin (SUPER_ADMIN 9147, ADMIN_SERVICIO 7429/8884), reglas y feriados por servicio."
+  }
+}

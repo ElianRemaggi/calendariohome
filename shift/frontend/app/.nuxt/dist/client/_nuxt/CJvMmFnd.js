@@ -1,0 +1,1 @@
+import{_ as o}from"./DlAUqK2U.js";import{B as t,f as r,J as s,W as a,_ as c,y as _}from"./CT_u5I1U.js";const u={};function i(e,n){return t(),r("div",null,[s(e.$slots,"default")])}const l=o(u,[["render",i]]);function m(){const e=a(),{replace:n}=c();return _(()=>{e.hydrate(),e.isAdmin||n("/calendario")}),{personaStore:e}}export{l as _,m as u};

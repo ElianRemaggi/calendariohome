@@ -1,0 +1,432 @@
+{
+  "$schema": "./revision-hallazgos.schema.json",
+  "meta": {
+    "proyecto": "Shift",
+    "fechaRevision": "2026-05-19",
+    "alcance": "Código backend/frontend vs documentación docs/00-13, implementation-plan.json",
+    "documentoCanonic": "docs/00-producto-actual.md",
+    "revisionAnterior": "docs/12-coherencia-revision.md",
+    "totalHallazgos": 28,
+    "porSeveridad": {
+      "critico": 0,
+      "alto": 2,
+      "medio": 9,
+      "bajo": 8,
+      "info": 8
+    },
+    "porCategoria": {
+      "codigo": 5,
+      "coherencia": 10,
+      "documentacion": 7,
+      "deuda": 5
+    },
+    "nota": "Revisar caso por caso; marcar estado en este JSON o en issues externos."
+  },
+  "resumen": {
+    "coherente": [
+      "Schema Prisma y seed (valores HO/Vacaciones, admins 9147/7429/8884) alineados con docs/09",
+      "Reglas R1-R6 en EventosReglasService con tests de integración",
+      "Calendario F09: Dom-Sáb, chips por persona, colores, días adyacentes solo lectura",
+      "Chat F10: API CRUD, permisos autor/admin, panel en calendario",
+      "Export Excel RRHH: modos mes/liquidación/rango, 6 columnas A-F, solo ACTIVO",
+      "Feriados desde calendario (no /admin/feriados)",
+      "Middleware auth, rutas y sesión X-Shift-Legajo coherentes con docs/07"
+    ],
+    "prioridadRemediacion": []
+  },
+  "estadosPosibles": ["pendiente", "en_revision", "aceptado", "corregido", "descartado"],
+  "hallazgos": [
+    {
+      "id": "SHIFT-001",
+      "severidad": "alto",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Seed en cada arranque del contenedor y pisa tipos de evento",
+      "descripcion": "docker-entrypoint.sh ejecuta `npx prisma db seed` en cada inicio. El upsert de TIPOS_EVENTO hace `update: { ...tipo, activo: true }`, reescribiendo cupo, flags y ventana temporal aunque un admin los haya cambiado. La doc 08 indica seed manual por defecto y opcional `SEED_ON_START=true`; el código no respeta esa variable y siempre ejecuta seed.",
+      "archivos": [
+        "backend/docker-entrypoint.sh",
+        "backend/app/prisma/seed.ts",
+        "docs/08-docker-build-deploy.md",
+        "docs/09-seed-datos-iniciales.md"
+      ],
+      "docReferencia": "docs/08-docker-build-deploy.md § Seed",
+      "sugerenciaAccion": "Condicionar seed a SEED_ON_START=true; en upsert de tipos usar solo `update: { activo: true }` (como funciones/servicios); documentar comportamiento operativo en README.",
+      "notasCorreccion": "2026-05-19: entrypoint respeta SEED_ON_START; seed solo reactiva tipos seed. Alta de tipos nuevos fallaba por validación mesMaxOffsetUser null (ver SHIFT-001b)."
+    },
+    {
+      "id": "SHIFT-001b",
+      "severidad": "alto",
+      "categoria": "codigo",
+      "estado": "corregido",
+      "titulo": "POST /tipos-evento rechazaba mesMaxOffsetUser null",
+      "descripcion": "CreateTipoEventoDto usaba @IsOptional() sin nullable; el formulario admin envía mesMaxOffsetUser: null para «meses siguientes ilimitados». class-validator rechazaba el body y el tipo no se guardaba (error 400, a veces poco visible).",
+      "archivos": ["backend/app/src/tipos-evento/dto/create-tipo-evento.dto.ts"],
+      "docReferencia": "docs/06-api-rest.md",
+      "sugerenciaAccion": "@IsOptional({ nullable: true }) en mesMaxOffsetUser. Test e2e en catalogos.e2e-spec.ts."
+    },
+    {
+      "id": "SHIFT-002",
+      "severidad": "alto",
+      "categoria": "codigo",
+      "estado": "corregido",
+      "titulo": "Fechas de feriado sin parseFechaLocal (riesgo TZ)",
+      "descripcion": "FeriadosService.create usa `new Date(dto.fecha)` (medianoche UTC). Los eventos usan parseFechaLocal (mediodía UTC). Puede desfasar un día en America/Argentina_Aires para R3 y etiquetas del calendario. findAll por year también usa `new Date('YYYY-MM-DD')` sin helper local.",
+      "archivos": [
+        "backend/app/src/feriados/feriados.service.ts",
+        "backend/app/src/eventos/utils/fechas.util.ts"
+      ],
+      "docReferencia": "docs/04-reglas-negocio.md (R3)",
+      "sugerenciaAccion": "Usar parseFechaLocal en create y en filtros por year; alinear con eventos.",
+      "notasCorreccion": "2026-05-19: FeriadosService usa parseFechaLocal en create y filtro por year."
+    },
+    {
+      "id": "SHIFT-003",
+      "severidad": "medio",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "GET /eventos no filtra estado ACTIVO",
+      "descripcion": "EventosService.findByMonth no filtra por estado. El calendario oculta cancelados en cliente (ShiftCalendarMonth filtra ACTIVO). La doc API implica eventos activos para calendario. Admin/eventos y Equipo hoy muestran cancelados (intencional en admin).",
+      "archivos": [
+        "backend/app/src/eventos/eventos.service.ts",
+        "frontend/app/pages/admin/eventos.vue",
+        "frontend/app/components/ShiftCalendarMonth.vue",
+        "docs/06-api-rest.md"
+      ],
+      "docReferencia": "docs/06-api-rest.md § GET /eventos",
+      "sugerenciaAccion": "Añadir `estado: ACTIVO` por defecto en findByMonth; query opcional `?incluirCancelados=true` para admin.",
+      "notasCorreccion": "2026-05-19: findByMonth filtra ACTIVO por defecto; admin/eventos usa incluirCancelados=true."
+    },
+    {
+      "id": "SHIFT-004",
+      "severidad": "medio",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Admin no puede cancelar eventos ajenos en UI",
+      "descripcion": "calendario.vue pone soloLecturaModal=true para cualquier chip ajeno. El API permite cancelar a ADMIN (ensureEventoAcceso). R7 documenta que admin puede cancelar eventos ajenos.",
+      "archivos": [
+        "frontend/app/pages/calendario.vue",
+        "frontend/app/components/EventoFormModal.vue",
+        "docs/07-frontend-ux-flujos.md"
+      ],
+      "docReferencia": "docs/04-reglas-negocio.md (R7, R9)",
+      "sugerenciaAccion": "Para ADMIN: soloLectura solo en edición de campos; mostrar botón Cancelar en eventos ajenos. O actualizar R7 si se decide restringir cancelación admin en UI.",
+      "notasCorreccion": "2026-05-19: soloLectura solo si evento ajeno y no admin; confirmación al cancelar ajeno. Modal usa soloLecturaEfectivo (admin ignora prop del padre). Requiere npm run generate en frontend."
+    },
+    {
+      "id": "SHIFT-005",
+      "severidad": "medio",
+      "categoria": "codigo",
+      "estado": "corregido",
+      "titulo": "PATCH /eventos no admite confirmarExcesoCupo",
+      "descripcion": "update() llama assertValidacionParaPersistir(resultado, false). UpdateEventoDto no incluye confirmarExcesoCupo. Editar fechas hacia día con cupo lleno y permiteExcesoCupo=true falla aunque POST permitiría confirmar.",
+      "archivos": [
+        "backend/app/src/eventos/eventos.service.ts",
+        "backend/app/src/eventos/dto/update-evento.dto.ts",
+        "backend/app/test/eventos.e2e-spec.ts",
+        "docs/06-api-rest.md"
+      ],
+      "docReferencia": "docs/04-reglas-negocio.md (R4.1)",
+      "sugerenciaAccion": "Añadir confirmarExcesoCupo al DTO y update(); o documentar explícitamente que PATCH no admite exceso.",
+      "notasCorreccion": "2026-05-20: UpdateEventoDto.confirmarExcesoCupo + test e2e PATCH con exceso."
+    },
+    {
+      "id": "SHIFT-006",
+      "severidad": "medio",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "00-producto-actual dice F01-F09; faltan F10-F11",
+      "descripcion": "El encabezado indica fases F01-F09 completadas. implementation-plan.json y código incluyen F10 (chat) y F11 (ventana temporal R6) como completed.",
+      "archivos": ["docs/00-producto-actual.md", "implementation-plan.json"],
+      "docReferencia": "docs/00-producto-actual.md",
+      "sugerenciaAccion": "Actualizar a F01-F11; mencionar chat y ventana temporal configurable por tipo.",
+      "notasCorreccion": "2026-05-20: docs/00, README y 12 actualizados a F01-F11."
+    },
+    {
+      "id": "SHIFT-007",
+      "severidad": "medio",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "AC06 del plan es demasiado amplio",
+      "descripcion": "acceptanceCriteria AC06: «Sábado, domingo y feriado bloquean alta». R2/R3 bloquean por tipo; Vacaciones no bloquea fin de semana ni feriado (seed).",
+      "archivos": ["implementation-plan.json"],
+      "docReferencia": "docs/04-reglas-negocio.md (R2, R3)",
+      "sugerenciaAccion": "Reformular AC06: bloqueo según bloqueaFinDeSemana/bloqueaFeriado del tipo.",
+      "notasCorreccion": "2026-05-20: AC06 en implementation-plan.json reformulado."
+    },
+    {
+      "id": "SHIFT-008",
+      "severidad": "medio",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "F06 del plan menciona ABM feriados en admin",
+      "descripcion": "Objetivos F06 y test F06-T02 hablan de ABM feriados en /admin. Implementación: feriados solo desde calendario. Coherente con 00 y 07, no con implementation-plan.",
+      "archivos": ["implementation-plan.json"],
+      "docReferencia": "docs/00-producto-actual.md, docs/07-frontend-ux-flujos.md",
+      "sugerenciaAccion": "Corregir objetivos F06 y F06-T02: feriados vía calendario (modal pestaña Feriado).",
+      "notasCorreccion": "2026-05-20: F06 objetivos y F06-T02 en implementation-plan.json."
+    },
+    {
+      "id": "SHIFT-009",
+      "severidad": "medio",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "F11-T01 en plan sigue pending",
+      "descripcion": "Fase F11 completed pero test F11-T01 status pending. Existe test/eventos-reglas.integration-spec.ts con casos de ventana temporal.",
+      "archivos": [
+        "implementation-plan.json",
+        "backend/app/test/eventos-reglas.integration-spec.ts"
+      ],
+      "docReferencia": "implementation-plan.json F11",
+      "sugerenciaAccion": "Ejecutar tests y marcar F11-T01 passed, o ajustar comando esperado en el plan.",
+      "notasCorreccion": "2026-05-20: F11-T01 status passed en implementation-plan.json."
+    },
+    {
+      "id": "SHIFT-010",
+      "severidad": "bajo",
+      "categoria": "deuda",
+      "estado": "corregido",
+      "titulo": "FeriadosAdmin.vue huérfano",
+      "descripcion": "Componente ABM feriados completo no montado en ninguna ruta. Eliminado; feriados solo vía calendario.",
+      "archivos": ["frontend/app/components/admin/FeriadosAdmin.vue"],
+      "docReferencia": "docs/12-coherencia-revision.md",
+      "sugerenciaAccion": "Eliminar componente o documentar como archivo de referencia; no dejar código muerto sin decisión.",
+      "notasCorreccion": "2026-05-20: eliminado FeriadosAdmin.vue; docs 00, 07 y 12 actualizados."
+    },
+    {
+      "id": "SHIFT-011",
+      "severidad": "bajo",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "Sección Equipo hoy en /admin sin documentar",
+      "descripcion": "admin/index.vue muestra resumen de eventos activos del día agrupados por tipo. No aparece en mapa de rutas de 07 ni en 00.",
+      "archivos": ["frontend/app/pages/admin/index.vue"],
+      "docReferencia": "docs/07-frontend-ux-flujos.md",
+      "sugerenciaAccion": "Añadir a 00 y 07 como feature admin, o marcar como experimental.",
+      "notasCorreccion": "2026-05-20: Equipo hoy documentado en docs/00 y docs/07."
+    },
+    {
+      "id": "SHIFT-012",
+      "severidad": "bajo",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "ExcesoCupoDialog siempre muestra Anotarme igual",
+      "descripcion": "El diálogo no recibe permiteExcesoCupo. La doc pide ocultar confirmación si el tipo no permite exceso. En la práctica el modal solo abre con advertencias EXCESO_CUPO (tipos con exceso); riesgo bajo si validación backend es estricta.",
+      "archivos": [
+        "frontend/app/components/ExcesoCupoDialog.vue",
+        "frontend/app/components/EventoFormModal.vue"
+      ],
+      "docReferencia": "docs/04-reglas-negocio.md, docs/07-frontend-ux-flujos.md",
+      "sugerenciaAccion": "Pasar permiteExcesoCupo y ocultar botón confirmar cuando sea false (defensa en profundidad).",
+      "notasCorreccion": "2026-05-20: ExcesoCupoDialog + validación en EventoFormModal.enviar."
+    },
+    {
+      "id": "SHIFT-013",
+      "severidad": "bajo",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "PATCH legajo: plan espera 400/422, código devuelve 403",
+      "descripcion": "personas.service rechaza cambio de legajo con ForbiddenException (403). F03-T05 del plan espera 400 o 422. Comportamiento correcto; código HTTP distinto.",
+      "archivos": ["backend/app/src/personas/personas.service.ts"],
+      "docReferencia": "implementation-plan.json F03-T05",
+      "sugerenciaAccion": "Actualizar criterio del test en plan a 403, o cambiar a BadRequestException por consistencia REST.",
+      "notasCorreccion": "2026-05-20: F03-T05 expected 403 en implementation-plan.json."
+    },
+    {
+      "id": "SHIFT-014",
+      "severidad": "bajo",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "Layout chat: doc flex vs implementación fixed",
+      "descripcion": "docs/13 describe layout flex calendario+panel sin solapar. calendario.vue usa panel fixed y padding xl:pr-[22rem]. Funcional pero distinto del diagrama.",
+      "archivos": [
+        "frontend/app/pages/calendario.vue",
+        "frontend/app/components/ShiftChatPanel.vue"
+      ],
+      "docReferencia": "docs/13-chat-mes.md § UI",
+      "sugerenciaAccion": "Actualizar spec en 13 a layout fixed+padding, o refactorizar a flex side-by-side.",
+      "notasCorreccion": "2026-05-20: docs/13 y docs/07 alineados con panel fixed + padding."
+    },
+    {
+      "id": "SHIFT-015",
+      "severidad": "info",
+      "categoria": "deuda",
+      "estado": "corregido",
+      "titulo": "UI editar evento (PATCH) pendiente",
+      "descripcion": "API PATCH /eventos/:id implementada. Modal con formulario de edición en chip propio (validar + confirmarExcesoCupo).",
+      "archivos": [
+        "frontend/app/components/EventoFormModal.vue",
+        "backend/app/src/eventos/eventos.controller.ts"
+      ],
+      "docReferencia": "docs/00-producto-actual.md § Pendiente",
+      "sugerenciaAccion": "Implementar formulario de edición o mantener como deuda explícita en roadmap.",
+      "notasCorreccion": "2026-05-20: EventoFormModal — editar propio ACTIVO; requiere npm run generate + restart shift-frontend."
+    },
+    {
+      "id": "SHIFT-016",
+      "severidad": "info",
+      "categoria": "deuda",
+      "estado": "descartado",
+      "titulo": "Perfil propio sin pantalla dedicada",
+      "descripcion": "PATCH /personas/:id para USER existe. Solo registro inicial y edición admin en Servicios.",
+      "archivos": ["backend/app/src/personas/personas.service.ts"],
+      "docReferencia": "docs/04-reglas-negocio.md (R7)",
+      "sugerenciaAccion": "Pantalla /perfil o cerrar alcance MVP sin UI.",
+      "notasCorreccion": "2026-05-20: fuera de alcance MVP (usuario no puede elegir sector/jefe)."
+    },
+    {
+      "id": "SHIFT-017",
+      "severidad": "info",
+      "categoria": "deuda",
+      "estado": "descartado",
+      "titulo": "Columna exceso cupo en Excel no implementada",
+      "descripcion": "Flag includeExceso futuro. Export solo columnas A-F. Coherente entre código y docs/10.",
+      "archivos": ["backend/app/src/exportaciones/rrhh-export.service.ts"],
+      "docReferencia": "docs/10-exportacion-excel-rrhh.md",
+      "sugerenciaAccion": "Implementar ?includeExceso=true cuando RRHH lo requiera.",
+      "notasCorreccion": "2026-05-20: no requerido por negocio."
+    },
+    {
+      "id": "SHIFT-018",
+      "severidad": "info",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Hardcode VACACIONES para máximo 35 días",
+      "descripcion": "R5.1 configurable: minDiasRango y maxDiasRango en TipoEvento (solo con carga por rango). Vacaciones seed 7–35.",
+      "archivos": [
+        "backend/app/prisma/schema.prisma",
+        "backend/app/src/eventos/eventos-reglas.service.ts",
+        "frontend/app/utils/rango-dias-reglas.ts",
+        "frontend/app/components/admin/TiposEventoAdmin.vue"
+      ],
+      "docReferencia": "docs/04-reglas-negocio.md (R5.1, R11)",
+      "sugerenciaAccion": "Aceptar como regla fija; opcional campo maxDiasRango en TipoEvento si se generaliza.",
+      "notasCorreccion": "2026-05-20: minDiasRango/maxDiasRango + migración; admin y calendario; errores RANGO_MIN_DIAS/RANGO_MAX_DIAS."
+    },
+    {
+      "id": "SHIFT-019",
+      "severidad": "info",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Seed y schema alineados con documentación",
+      "descripcion": "Funciones, servicio DTO DESARROLLO, tipos HO/Vacaciones, admins 9147/7429/8884 coinciden con docs/09. Schema Prisma coherente con docs/03.",
+      "archivos": [
+        "backend/app/prisma/schema.prisma",
+        "backend/app/prisma/seed.ts"
+      ],
+      "docReferencia": "docs/09-seed-datos-iniciales.md, docs/03-modelo-dominio.md",
+      "sugerenciaAccion": "Sin cambio; mantener al sincronizar seed (cuidado con SHIFT-001)."
+    },
+    {
+      "id": "SHIFT-020",
+      "severidad": "info",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Reglas R1-R6 implementadas y testeadas",
+      "descripcion": "EventosReglasService cubre cupo, exceso, fin de semana/feriado por flags, rango, ventana temporal, una persona por día.",
+      "archivos": ["backend/app/src/eventos/eventos-reglas.service.ts"],
+      "docReferencia": "docs/04-reglas-negocio.md",
+      "sugerenciaAccion": "Sin cambio salvo fixes SHIFT-002 y SHIFT-005."
+    },
+    {
+      "id": "SHIFT-021",
+      "severidad": "info",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Calendario F09 y chat F10 coherentes con spec",
+      "descripcion": "Dom-Sáb, chips, colores, días adyacentes, chat por mes/servicio, vista Lun-Vie <920px con chat abierto.",
+      "archivos": [
+        "frontend/app/pages/calendario.vue",
+        "frontend/app/components/ShiftCalendarMonth.vue",
+        "frontend/app/components/ShiftChatPanel.vue"
+      ],
+      "docReferencia": "docs/11-ui-calendario-equipo.md, docs/13-chat-mes.md",
+      "sugerenciaAccion": "Sin cambio."
+    },
+    {
+      "id": "SHIFT-022",
+      "severidad": "info",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Export Excel RRHH coherente",
+      "descripcion": "GET /exports/rrhh con modos mes/liquidación/rango; 6 columnas; excluye cancelados.",
+      "archivos": ["backend/app/src/exportaciones/"],
+      "docReferencia": "docs/10-exportacion-excel-rrhh.md",
+      "sugerenciaAccion": "Sin cambio."
+    },
+    {
+      "id": "SHIFT-023",
+      "severidad": "info",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "API comentarios-mes y permisos OK",
+      "descripcion": "CRUD con soft delete; autor edita; admin borra; soporte imagenUrl validado en API.",
+      "archivos": ["backend/app/src/comentarios-mes/"],
+      "docReferencia": "docs/13-chat-mes.md",
+      "sugerenciaAccion": "Sin cambio."
+    },
+    {
+      "id": "SHIFT-024",
+      "severidad": "info",
+      "categoria": "documentacion",
+      "estado": "pendiente",
+      "titulo": "Tests manuales del plan mayormente pending",
+      "descripcion": "Fases F01-F11 completed en JSON pero F05-T03 a F09-T04, F08-T01/T03 y otros tests manuales siguen pending.",
+      "archivos": ["implementation-plan.json"],
+      "docReferencia": "implementation-plan.json",
+      "sugerenciaAccion": "Ejecutar checklist manual o rebajar prioridad en el plan."
+    },
+    {
+      "id": "SHIFT-025",
+      "severidad": "info",
+      "categoria": "coherencia",
+      "estado": "corregido",
+      "titulo": "Auth, rutas y sesión coherentes",
+      "descripcion": "auth.global.ts, useShiftRoute, X-Shift-Legajo, rutas / /registro /calendario /admin/* alineadas con 07.",
+      "archivos": [
+        "frontend/app/middleware/auth.global.ts",
+        "frontend/app/composables/useApi.ts"
+      ],
+      "docReferencia": "docs/07-frontend-ux-flujos.md",
+      "sugerenciaAccion": "Sin cambio."
+    },
+    {
+      "id": "SHIFT-026",
+      "severidad": "medio",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "Modelo ComentarioMes ausente en docs/03",
+      "descripcion": "schema.prisma incluye ComentarioMes con imagenUrl. docs/03-modelo-dominio.md no documenta la entidad ni su relación con Servicio/Persona.",
+      "archivos": [
+        "backend/app/prisma/schema.prisma",
+        "docs/03-modelo-dominio.md"
+      ],
+      "docReferencia": "docs/13-chat-mes.md",
+      "sugerenciaAccion": "Añadir sección ComentarioMes y diagrama en 03; enlazar a 13.",
+      "notasCorreccion": "2026-05-20: sección ComentarioMes en docs/03-modelo-dominio.md."
+    },
+    {
+      "id": "SHIFT-027",
+      "severidad": "bajo",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "06-api-rest comentarios sin imagenUrl",
+      "descripcion": "docs/06 describe POST comentarios solo con texto. docs/13 y el código soportan imagenUrl opcional (memes). 00 menciona chat pero no imagenUrl en API.",
+      "archivos": ["docs/06-api-rest.md", "docs/13-chat-mes.md"],
+      "docReferencia": "docs/06-api-rest.md § Comentarios del mes",
+      "sugerenciaAccion": "Ampliar 06 y 00 con campo imagenUrl y regla texto|imagen.",
+      "notasCorreccion": "2026-05-20: POST comentarios con imagenUrl en docs/06-api-rest.md."
+    },
+    {
+      "id": "SHIFT-028",
+      "severidad": "bajo",
+      "categoria": "documentacion",
+      "estado": "corregido",
+      "titulo": "docs/12-coherencia-revision desactualizado",
+      "descripcion": "12 indica última revisión MVP F01-F09; no menciona F10 chat, F11 ventana temporal, imagenUrl en comentarios, Equipo hoy, ni hallazgos de esta pasada.",
+      "archivos": ["docs/12-coherencia-revision.md"],
+      "docReferencia": "docs/12-coherencia-revision.md",
+      "sugerenciaAccion": "Actualizar tabla resumen y enlazar a revision-hallazgos.json tras cerrar ítems.",
+      "notasCorreccion": "2026-05-20: docs/12 reescrito; enlace a revision-hallazgos.json."
+    }
+  ]
+}
